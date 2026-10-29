@@ -284,6 +284,7 @@
     <ClCompile Include="NationalParks.cpp" />
     <ClCompile Include="GreatPersonAssign.cpp" />
     <ClCompile Include="UnitCommandActions.cpp" />
+    <ClCompile Include="UnitPropertyRequirement.cpp" />
     <ClCompile Include="Player.cpp" />
     <ClCompile Include="PlayerCities.cpp" />
     <ClCompile Include="PlayerGovernors.cpp" />
@@ -398,6 +399,7 @@
     <ClInclude Include="NationalParks.h" />
     <ClInclude Include="GreatPersonAssign.h" />
     <ClInclude Include="UnitCommandActions.h" />
+    <ClInclude Include="UnitPropertyRequirement.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="PlayerCities.h" />
     <ClInclude Include="PlayerGovernors.h" />

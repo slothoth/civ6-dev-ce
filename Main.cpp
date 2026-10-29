@@ -29,6 +29,7 @@
 #include "NationalParks.h"
 #include "GreatPersonAssign.h"
 #include "UnitCommandActions.h"
+#include "UnitPropertyRequirement.h"
 #include "DevBridge.h"
 #include "LuaHooks.h"
 #include "LuaDebugger.h"
@@ -157,6 +158,7 @@ static void InitHooks() {
     DevBridge::Create();
     GreatPersonAssign::Create();
     UnitCommandActions::Create();
+    UnitPropertyRequirement::Create();
     TerrainView::Create();
 
     std::cout << "Hooks initialized!\n";
