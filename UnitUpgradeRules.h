@@ -49,7 +49,30 @@ namespace UnitUpgradeRules {
 	constexpr uintptr_t BUILDING_DEF_INDEX = 0x14;          // Definition::Building: BuildingTypes index
 	constexpr uintptr_t BUILDING_DEF_NAME = 0x68;           // Definition::Building: Name (LOC key, char*)
 
+	// Alternative upgrades (DevCE_UnitAltUpgrades): extra first steps besides the UnitUpgrades row. The chosen first step travels
+	// in the UPGRADE command's generic request int (parameter PARAM_CHOICE, Request +0x18) as unit index + 1; the AI picks the
+	// allowed option with the best AI::UnitProduction::GetUnitEfficiency (the score its UpgradeUnits already compares).
+	constexpr uintptr_t UPGRADE_COMMAND_CAN_START_OFFSET = 0x663220;   // Unit::Commands::Upgrade::CanStart(handler, unit, const Request&, testOnly, results) (hooked)
+	constexpr uintptr_t UPGRADE_COMMAND_START_OFFSET = 0x663460;       // Unit::Commands::Upgrade::Start(handler, unit, const Request&) (vtable +0x20, hooked)
+	constexpr uintptr_t UPGRADE_COMMAND_VTABLE = 0xa28038;             // Unit::Commands::Upgrade vtable (+0x10 CanStart, +0x20 Start)
+	// Gathering Storm registers its own Upgrade command (XP2): same CanStart, its own Start (a copy of the base one). It is the one
+	// the game uses with the expansion; both Starts are hooked.
+	constexpr uintptr_t XP2_UPGRADE_COMMAND_START_OFFSET = 0x746680;   // XP2 Upgrade command Start(handler, unit, const Request&) (hooked)
+	constexpr uintptr_t XP2_UPGRADE_COMMAND_VTABLE = 0xa432d0;         // its vtable (+0x10 = the shared CanStart, +0x20 = this Start)
+	constexpr uintptr_t GET_UPGRADE_MANAGER_OFFSET = 0x3b7cf0;         // Unit::Upgrade::Manager* (game component lookup, no arguments)
+	constexpr uintptr_t GET_UPGRADE_COST_OFFSET = 0x3b7d50;            // Unit::Upgrade::Manager::GetUpgradeCost(manager, unit) -> gold
+	constexpr uintptr_t GET_UNIT_EFFICIENCY_OFFSET = 0x524e30;         // AI::UnitProduction::GetUnitEfficiency(production, FixedPoint<8>* out, UnitTypes) -> out
+	constexpr uintptr_t REQUEST_CHOICE = 0x18;              // Unit::Commands::Request: int copied from parameter PARAM_CHOICE (BaseHandler::MakeRequest)
+	constexpr uint32_t PARAM_CHOICE = 0xc65a8ea6;           // command parameter that BaseHandler::MakeRequest copies to Request +0x18
+	constexpr uintptr_t PLAYER_UNITS_VERSION = 0x128;       // Player::Units: int[unit type] -> the player's version (-1: itself)
+	constexpr uintptr_t PLAYER_AI = 0x670;                  // Player::Instance -> AI component; +0x188 AI::UnitProduction
+	constexpr uintptr_t AI_UNIT_PRODUCTION = 0x188;
+	// CanUpgrade results added by Dev CE (read by the UI as tResults[key])
+	constexpr uint32_t RESULT_UPGRADE_COST = 0x44435543;           // gold cost of this upgrade
+	constexpr uint32_t RESULT_UPGRADE_RESOURCE_COST = 0x44435552;  // strategic resource cost of this upgrade
+
 	void Create();
 	void ResetForNewGame();
-	int Register(hks::lua_State* L);   // gameplay state: UnitUpgradeRules.SetMinLevel / GetMinLevel / Clear / SetBuildingRule / GetBuildingRule
+	int Register(hks::lua_State* L);     // gameplay state: UnitUpgradeRules.SetMinLevel / GetMinLevel / Clear / SetBuildingRule / GetBuildingRule / AddAltUpgrade / ClearAltUpgrades / GetAltUpgrades
+	int RegisterUI(hks::lua_State* L);   // UI state: UnitUpgradeRules.PARAM_CHOICE / RESULT_COST / RESULT_RESOURCE_COST / IsAltAvailable
 }

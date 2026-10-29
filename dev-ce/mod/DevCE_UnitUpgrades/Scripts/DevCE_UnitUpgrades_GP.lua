@@ -59,6 +59,25 @@ local function PushRules()
 	end
 	print(LOG .. #rows .. " rows, " .. nSet .. " upgrade steps with a minimum level");
 
+	-- Alternative upgrades: unique units (UnitReplaces) get the choices of the unit they replace unless they have rows of their own
+	if UnitUpgradeRules.AddAltUpgrade ~= nil and GameInfo.DevCE_UnitAltUpgrades ~= nil then
+		UnitUpgradeRules.ClearAltUpgrades();
+		local own = {};
+		for row in GameInfo.DevCE_UnitAltUpgrades() do own[row.Unit] = true; end
+		local nAlt, available = 0, true;
+		for row in GameInfo.DevCE_UnitAltUpgrades() do
+			local to = GameInfo.Units[row.UpgradeUnit];
+			for _, fromType in ipairs(VersionsOf(row.Unit)) do
+				local from = GameInfo.Units[fromType];
+				if from ~= nil and to ~= nil and from.Index ~= to.Index and (fromType == row.Unit or not own[fromType]) then
+					available = UnitUpgradeRules.AddAltUpgrade(from.Index, to.Index) and available;
+					nAlt = nAlt + 1;
+				end
+			end
+		end
+		print(LOG .. nAlt .. " alternative upgrades" .. (available and "" or " (NOT available in this Dev CE build, see DevBridge.log)"));
+	end
+
 	-- Building prerequisites (Unit_BuildingPrereqs of the upgraded unit)
 	local param = GameInfo.GlobalParameters["DEVCE_UPGRADE_NEEDS_PREREQ_BUILDING"];
 	local on = param ~= nil and tonumber(param.Value) == 1;

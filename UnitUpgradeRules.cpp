@@ -7,6 +7,7 @@
 #include "DevBridge.h"
 #include <cstring>
 #include <unordered_map>
+#include <vector>
 
 namespace UnitUpgradeRules {
 	struct UnitVector { void** begin; void** end; };
@@ -27,6 +28,12 @@ namespace UnitUpgradeRules {
 	struct CityID { int16_t owner; int16_t kind; uint32_t id; };   // kind 2 = city
 	typedef void* (__fastcall* GetCityFn)(const CityID* id);
 	typedef bool(__fastcall* BuildingsTestFn)(void* buildings, int buildingType);
+	typedef bool(__fastcall* CmdCanStartFn)(void* handler, void* unit, const void* request, bool testOnly, void* results);
+	typedef void(__fastcall* CmdStartFn)(void* handler, void* unit, const void* request);
+	typedef int(__fastcall* GetUpgradeCostFn)(void* manager, void* unit);
+	typedef int* (__fastcall* GetUnitEfficiencyFn)(void* production, int* out, int unitType);
+	typedef bool(__fastcall* PlayerBoolFn)(void* player);
+	typedef void(__fastcall* ResultsSetIntFn)(void* results, uint32_t key, int value);
 
 	static GetAvailableUpgradeFn base_GetAvailableUpgrade;
 	static GetNextUpgradeFn GetNextUpgrade;
@@ -43,7 +50,14 @@ namespace UnitUpgradeRules {
 	static UnitGetPlotFn UnitGetPlot;
 	static GetCityFn GetCity;
 	static BuildingsTestFn HasBuilding, IsPillaged;
-	static bool gOk = false, gReportsOk = false, gBuildingRuleOk = false;
+	static CmdCanStartFn base_CmdCanStart;
+	static CmdStartFn base_CmdStart, base_CmdStartXP2;
+	typedef void* (__fastcall* GetUpgradeManagerFn)();
+	static GetUpgradeManagerFn GetUpgradeManager;
+	static GetUpgradeCostFn GetUpgradeCost;
+	static GetUnitEfficiencyFn GetUnitEfficiency;
+	static PlayerBoolFn PlayerIsHuman;
+	static bool gOk = false, gReportsOk = false, gBuildingRuleOk = false, gAltOk = false;
 
 	struct Check { const char* name; uintptr_t rva; uint8_t bytes[16]; size_t n; };
 	static const Check kChecks[] = {
@@ -72,6 +86,30 @@ namespace UnitUpgradeRules {
 		{ "City::Buildings::IsPillaged", CITY_BUILDINGS_IS_PILLAGED_OFFSET, { 0x85, 0xd2, 0x78, 0x11, 0x3b, 0x51, 0x30, 0x7d, 0x0c, 0x48, 0x8b, 0x41 }, 12 },
 		// Buildings loader: column 30 (Name) -> building +0x68
 		{ "Building definition Name at +0x68", 0x7b6494, { 0x48, 0x85, 0xc0, 0x74, 0x0e, 0x48, 0x8d, 0x4b, 0x68 }, 9 },
+	};
+	// Alternative upgrades only (a mismatch switches off just them)
+	static const Check kAltChecks[] = {
+		{ "Unit::Commands::Upgrade::CanStart", UPGRADE_COMMAND_CAN_START_OFFSET, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x41, 0x0f }, 12 },
+		{ "Unit::Commands::Upgrade::Start", UPGRADE_COMMAND_START_OFFSET, { 0x4c, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89 }, 12 },
+		{ "XP2 Upgrade command Start", XP2_UPGRADE_COMMAND_START_OFFSET, { 0x4c, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89 }, 12 },
+		// both Starts begin with Upgrade::Manager (0x3b7cf0) -> GetUpgradeUnitType (the target the guard below checks first)
+		{ "Upgrade::Start -> Upgrade manager, GetUpgradeUnitType", 0x66349c, { 0xe8, 0x4f, 0x48, 0xd5, 0xff, 0x48, 0x8b, 0xc8, 0x48, 0x8b, 0xd6, 0xe8, 0x64, 0x4b, 0xd5, 0xff }, 16 },
+		{ "XP2 Start -> Upgrade manager, GetUpgradeUnitType", 0x7466bc, { 0xe8, 0x2f, 0x16, 0xc7, 0xff, 0x48, 0x8b, 0xc8, 0x48, 0x8b, 0xd6, 0xe8, 0x44, 0x19, 0xc7, 0xff }, 16 },
+		{ "Unit::Upgrade manager lookup", GET_UPGRADE_MANAGER_OFFSET, { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x8b, 0x1d }, 8 },
+		// (the Upgrade command's vtable entries +0x10 / +0x20 are checked in Create: they hold relocated addresses)
+		// BaseHandler::MakeRequest: parameter 0xc65a8ea6 -> Request +0x18
+		{ "BaseHandler::MakeRequest PARAM_CHOICE", 0x3e3a6, { 0xba, 0xa6, 0x8e, 0x5a, 0xc6 }, 5 },
+		{ "BaseHandler::MakeRequest -> Request +0x18", 0x3e3be, { 0x89, 0x45, 0x18 }, 3 },
+		// GetNextUpgrade: player Units +0x6c8 -> version table +0x128
+		{ "GetNextUpgrade: player's unit version table", 0x37dce2, { 0x48, 0x8b, 0x82, 0xc8, 0x06, 0x00, 0x00, 0x48, 0x8b, 0x88, 0x28, 0x01, 0x00, 0x00 }, 14 },
+		{ "Unit::Upgrade::Manager::GetUpgradeCost", GET_UPGRADE_COST_OFFSET, { 0x48, 0x89, 0x5c, 0x24, 0x18, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83 }, 12 },
+		// AI::Military::UpgradeUnits: player +0x670 AI, +0x188 UnitProduction, GetUnitEfficiency(production, out, type)
+		{ "UpgradeUnits: player AI +0x670", 0x4d2e46, { 0x4c, 0x8b, 0xa3, 0x70, 0x06, 0x00, 0x00 }, 7 },
+		{ "UpgradeUnits -> GetUnitEfficiency(+0x188)", 0x4d2eea, { 0x49, 0x8d, 0x8c, 0x24, 0x88, 0x01, 0x00, 0x00, 0xe8, 0x39, 0x1f, 0x05, 0x00 }, 13 },
+		{ "AI::UnitProduction::GetUnitEfficiency", GET_UNIT_EFFICIENCY_OFFSET, { 0x40, 0x53, 0x48, 0x83, 0xec, 0x30, 0x8b, 0x41, 0x20, 0x48, 0x8b, 0xda }, 12 },
+		{ "Player::Instance::IsHuman", UnitCommandActions::PLAYER_IS_HUMAN_OFFSET, { 0x48, 0x83, 0xec, 0x28, 0x8b, 0x91, 0xd8, 0x00, 0x00, 0x00, 0x48, 0x8b }, 12 },
+		// CanUpgrade: results->vt[0x128](results, UNIT_TYPE, int) (the setter Dev CE uses for its cost results)
+		{ "CanUpgrade: results set int", 0x3b78e2, { 0xba, 0x5b, 0xec, 0x0d, 0x3c, 0x48, 0x8b, 0xce, 0xff, 0x90, 0x28, 0x01, 0x00, 0x00 }, 14 },
 	};
 
 	// ---- rules (written by the gameplay script at game start, read from any thread afterwards) ----------------------------
@@ -172,13 +210,46 @@ namespace UnitUpgradeRules {
 		return b;
 	}
 
-	// GetAvailableUpgrade (0x37dbe0) with the rules: the furthest unlocked step that the rules allow. A blocked first step is
-	// still returned (with *firstBlock set) so the panel can name it; a blocked later step ends the walk before it.
-	static int Walk(void* rules, void* def, void* player, void* unit, int depth, Block* firstBlock) {
-		if (def == nullptr) return -1;
+	// ---- alternative upgrades (written by the gameplay script at game start) ----------------------------------------------
+	static std::unordered_map<int, std::vector<int>> gAlt;   // unit type -> extra first steps, in table order
+	static thread_local int tChoice = -1;                    // first step chosen by the UPGRADE command on this thread (-1: none)
+	constexpr int MAX_OPTIONS = 16;
+
+	// The player's version of a unit type (its unique unit), as GetNextUpgrade maps the UnitUpgrades row.
+	static int PlayerVersion(void* player, int t) {
+		if (t < 0) return t;
+		__try {
+			const int* table = *(const int* const*)(*(char**)((char*)player + PLAYER_UNITS) + PLAYER_UNITS_VERSION);
+			const int v = table[t];
+			return v != -1 ? v : t;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return t;
+		}
+	}
+
+	// The first steps of a unit: [0] the UnitUpgrades one (-1 if none), then its alternative upgrades (player's versions, no repeats).
+	static int FirstSteps(void* def, void* player, int out[MAX_OPTIONS]) {
 		void* from = def;
-		const int next = GetNextUpgrade(&from, player);
-		if (next < 0) return -1;
+		int n = 0;
+		out[n++] = GetNextUpgrade(&from, player);
+		if (!gAltOk || gAlt.empty()) return n;
+		auto it = gAlt.find(*(int*)((char*)def + UNIT_DEF_INDEX));
+		if (it == gAlt.end()) return n;
+		for (int t : it->second) {
+			const int v = PlayerVersion(player, t);
+			bool seen = false;
+			for (int i = 0; i < n; ++i) if (out[i] == v) seen = true;
+			if (!seen && n < MAX_OPTIONS) out[n++] = v;
+		}
+		return n;
+	}
+
+	// GetAvailableUpgrade (0x37dbe0) with the rules, from a given first step: the furthest unlocked step that the rules allow.
+	// A blocked first step is still returned (with *firstBlock set) so the panel can name it; a blocked later step ends the walk
+	// before it. Later steps follow the UnitUpgrades chain only.
+	static int Walk(void* rules, void* def, void* player, void* unit, int depth, Block* firstBlock);
+	static int WalkFrom(void* rules, void* def, int next, void* player, void* unit, int depth, Block* firstBlock) {
+		if (def == nullptr || next < 0) return -1;
 		void* nextDef = UnitDefinition(next);
 		if (nextDef == nullptr || !HasPrerequisites(rules, &nextDef, player)) return -1;
 		const Block b = Gate(unit, player, *(int*)((char*)def + UNIT_DEF_INDEX), next);
@@ -193,17 +264,94 @@ namespace UnitUpgradeRules {
 		}
 		return next;
 	}
+	static int Walk(void* rules, void* def, void* player, void* unit, int depth, Block* firstBlock) {
+		if (def == nullptr) return -1;
+		void* from = def;
+		return WalkFrom(rules, def, GetNextUpgrade(&from, player), player, unit, depth, firstBlock);
+	}
+
+	// The AI's own production score for a unit type (0 for one it does not rate), as AI::Military::UpgradeUnits compares them.
+	static int Efficiency(void* player, int unitType) {
+		__try {
+			char* ai = *(char**)((char*)player + PLAYER_AI);
+			if (ai == nullptr) return 0;
+			int out = 0;
+			const int* r = GetUnitEfficiency(ai + AI_UNIT_PRODUCTION, &out, unitType);
+			return r != nullptr ? *r : 0;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return 0;
+		}
+	}
+
+	// The target for a unit with these first steps: the chosen one (tChoice), else for the AI the allowed option with the best
+	// efficiency, else the UnitUpgrades one (the game's default; humans pick the others with their own buttons).
+	static int Choose(void* rules, void* def, void* player, void* unit, Block* firstBlock) {
+		int steps[MAX_OPTIONS];
+		const int n = FirstSteps(def, player, steps);
+		if (tChoice >= 0) {
+			const int want = PlayerVersion(player, tChoice);
+			for (int i = 0; i < n; ++i) if (steps[i] == want && want >= 0) return WalkFrom(rules, def, want, player, unit, 0, firstBlock);
+			return -1;   // not an option of this unit
+		}
+		if (n > 1 && !PlayerIsHuman(player)) {
+			int best = -1, bestScore = 0;
+			for (int i = 0; i < n; ++i) {
+				if (steps[i] < 0) continue;
+				Block b = {};
+				const int r = WalkFrom(rules, def, steps[i], player, unit, 0, &b);
+				if (r < 0 || b.kind != BLOCK_NONE) continue;
+				const int score = Efficiency(player, r);
+				if (best < 0 || score > bestScore) { best = r; bestScore = score; }
+			}
+			if (best >= 0) return best;
+		}
+		return WalkFrom(rules, def, steps[0], player, unit, 0, firstBlock);
+	}
 
 	static int __fastcall Hook_GetAvailableUpgrade(void* rules, void** def, void* player) {
 		void* unit = tUnit;
 		if (unit == nullptr || def == nullptr) return base_GetAvailableUpgrade(rules, def, player);
 		tUnit = nullptr;   // the game's own calls below us (none today) see the plain walk
 		Block b = {};
-		const int r = Walk(rules, *def, player, unit, 0, &b);
+		const int r = Choose(rules, *def, player, unit, &b);
 		tUnit = unit;
 		tFirstBlock = b;
 		return r;
 	}
+
+	// The UPGRADE command: its request's generic int (parameter PARAM_CHOICE) is the chosen first step + 1 (0: the default).
+	static int RequestChoice(const void* request) {
+		if (!gAltOk || request == nullptr) return -1;
+		__try {
+			const int v = *(const int*)((const char*)request + REQUEST_CHOICE);
+			return v > 0 ? v - 1 : -1;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return -1;
+		}
+	}
+	static bool __fastcall Hook_CmdCanStart(void* handler, void* unit, const void* request, bool testOnly, void* results) {
+		const int saved = tChoice;
+		tChoice = RequestChoice(request);
+		const bool r = base_CmdCanStart(handler, unit, request, testOnly, results);
+		tChoice = saved;
+		return r;
+	}
+	static int __fastcall Hook_GetUpgradeUnitType(void* manager, void* unit);
+	// Both Upgrade Starts remove the unit before creating the new one, and do not check the target: with no target (-1) the unit
+	// would just disappear. The command's message runs CanStart first, but other callers need not, so Start checks it again.
+	static void CmdStart(CmdStartFn base, void* handler, void* unit, const void* request) {
+		const int saved = tChoice;
+		tChoice = RequestChoice(request);
+		void* manager = unit != nullptr ? GetUpgradeManager() : nullptr;
+		if (manager != nullptr && Hook_GetUpgradeUnitType(manager, unit) >= 0) {
+			base(handler, unit, request);
+		} else {
+			DevBridge::Log("[UnitUpgradeRules] UPGRADE command with no upgrade target (choice %d): not started", tChoice);
+		}
+		tChoice = saved;
+	}
+	static void __fastcall Hook_CmdStart(void* handler, void* unit, const void* request) { CmdStart(base_CmdStart, handler, unit, request); }
+	static void __fastcall Hook_CmdStartXP2(void* handler, void* unit, const void* request) { CmdStart(base_CmdStartXP2, handler, unit, request); }
 
 	static int __fastcall Hook_GetUpgradeUnitType(void* manager, void* unit) {
 		void* saved = tUnit;
@@ -272,6 +420,15 @@ namespace UnitUpgradeRules {
 		tFirstBlock = {};
 		bool r = base_CanUpgrade(manager, unit, testVisible, results);
 		const Block b = tFirstBlock;
+		if (gAltOk && results != nullptr && tChoice >= 0 && Hook_GetUpgradeUnitType(manager, unit) >= 0) {
+			// the cost of this option (pUnit:GetUpgradeCost() in Lua knows only the default one)
+			__try {
+				ResultsSetIntFn set = *(ResultsSetIntFn*)(*(char**)results + 0x128);
+				set(results, RESULT_UPGRADE_COST, GetUpgradeCost(manager, unit));
+				set(results, RESULT_UPGRADE_RESOURCE_COST, Hook_GetUpgradeResourceCost(manager, unit));
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+			}
+		}
 		tUnit = saved;
 		if (b.kind != BLOCK_NONE && !testVisible) {
 			AddReason(results, b);
@@ -314,19 +471,71 @@ namespace UnitUpgradeRules {
 		return 1;
 	}
 
+	// UnitUpgradeRules.AddAltUpgrade(fromUnitIndex, toUnitIndex) -> true if alternative upgrades are available in this build
+	static int lAddAltUpgrade(hks::lua_State* L) {
+		const int from = hks::checkinteger(L, 1), to = hks::checkinteger(L, 2);
+		if (UnitDefinition(from) == nullptr || UnitDefinition(to) == nullptr || from == to) {
+			hks::error(L, "UnitUpgradeRules.AddAltUpgrade: invalid unit index %d or %d", from, to);
+			return 0;
+		}
+		std::vector<int>& v = gAlt[from];
+		bool seen = false;
+		for (int t : v) if (t == to) seen = true;
+		if (!seen) v.push_back(to);
+		hks::pushboolean(L, gAltOk);
+		return 1;
+	}
+	// UnitUpgradeRules.ClearAltUpgrades()
+	static int lClearAltUpgrades(hks::lua_State* L) {
+		gAlt.clear();
+		return 0;
+	}
+	// UnitUpgradeRules.GetAltUpgrades(fromUnitIndex) -> { toUnitIndex, ... } (table order)
+	static int lGetAltUpgrades(hks::lua_State* L) {
+		auto it = gAlt.find(hks::checkinteger(L, 1));
+		const int n = it != gAlt.end() ? (int)it->second.size() : 0;
+		hks::createtable(L, n, 0);
+		for (int i = 0; i < n; ++i) {
+			hks::pushinteger(L, i + 1);
+			hks::pushinteger(L, it->second[i]);
+			hks::settable(L, -3);
+		}
+		return 1;
+	}
+
 	int Register(hks::lua_State* L) {
 		if (!gOk) return 0;
-		hks::createtable(L, 0, 5);
+		hks::createtable(L, 0, 8);
 		PushLuaMethod(L, lSetMinLevel, "lUnitUpgradeRulesSetMinLevel", -2, "SetMinLevel");
 		PushLuaMethod(L, lGetMinLevel, "lUnitUpgradeRulesGetMinLevel", -2, "GetMinLevel");
 		PushLuaMethod(L, lClear, "lUnitUpgradeRulesClear", -2, "Clear");
 		PushLuaMethod(L, lSetBuildingRule, "lUnitUpgradeRulesSetBuildingRule", -2, "SetBuildingRule");
 		PushLuaMethod(L, lGetBuildingRule, "lUnitUpgradeRulesGetBuildingRule", -2, "GetBuildingRule");
+		PushLuaMethod(L, lAddAltUpgrade, "lUnitUpgradeRulesAddAltUpgrade", -2, "AddAltUpgrade");
+		PushLuaMethod(L, lClearAltUpgrades, "lUnitUpgradeRulesClearAltUpgrades", -2, "ClearAltUpgrades");
+		PushLuaMethod(L, lGetAltUpgrades, "lUnitUpgradeRulesGetAltUpgrades", -2, "GetAltUpgrades");
 		hks::setfield(L, hks::LUA_GLOBAL, "UnitUpgradeRules");
 		return 0;
 	}
 
-	void ResetForNewGame() { gMinLevel.clear(); gBuildingRule = false; }
+	// UI state: the keys a unit panel needs to offer the alternative upgrades through the normal UPGRADE command:
+	//   UnitManager.CanStartCommand(unit, UnitCommandTypes.UPGRADE, { [UnitUpgradeRules.PARAM_CHOICE] = firstStepIndex + 1 }, testOnly, true)
+	//   -> tResults[UnitCommandResults.UNIT_TYPE], tResults[UnitUpgradeRules.RESULT_COST], tResults[UnitUpgradeRules.RESULT_RESOURCE_COST]
+	//   UnitManager.RequestCommand(unit, UnitCommandTypes.UPGRADE, { [UnitUpgradeRules.PARAM_CHOICE] = firstStepIndex + 1 })
+	int RegisterUI(hks::lua_State* L) {
+		if (!gOk || !gAltOk) return 0;
+		hks::createtable(L, 0, 3);
+		hks::pushinteger(L, (int32_t)PARAM_CHOICE);
+		hks::setfield(L, -2, "PARAM_CHOICE");
+		hks::pushinteger(L, (int32_t)RESULT_UPGRADE_COST);
+		hks::setfield(L, -2, "RESULT_COST");
+		hks::pushinteger(L, (int32_t)RESULT_UPGRADE_RESOURCE_COST);
+		hks::setfield(L, -2, "RESULT_RESOURCE_COST");
+		hks::setfield(L, hks::LUA_GLOBAL, "UnitUpgradeRules");
+		return 0;
+	}
+
+	void ResetForNewGame() { gMinLevel.clear(); gBuildingRule = false; gAlt.clear(); }
 
 	// ---- setup -------------------------------------------------------------------------------------------------------------
 	void Create() {
@@ -358,6 +567,27 @@ namespace UnitUpgradeRules {
 				break;
 			}
 		}
+		gAltOk = true;
+		for (const Check& c : kAltChecks) {
+			if (memcmp((void*)(b + c.rva), c.bytes, c.n) != 0) {
+				DevBridge::Log("[UnitUpgradeRules] %s has unexpected bytes at 0x%llx: alternative upgrades are not available", c.name, (unsigned long long)c.rva);
+				gAltOk = false;
+				break;
+			}
+		}
+		if (gAltOk) {
+			const uintptr_t* vt = (const uintptr_t*)(b + UPGRADE_COMMAND_VTABLE);
+			const uintptr_t* vt2 = (const uintptr_t*)(b + XP2_UPGRADE_COMMAND_VTABLE);
+			if (vt[2] != b + UPGRADE_COMMAND_CAN_START_OFFSET || vt[4] != b + UPGRADE_COMMAND_START_OFFSET
+				|| vt2[2] != b + UPGRADE_COMMAND_CAN_START_OFFSET || vt2[4] != b + XP2_UPGRADE_COMMAND_START_OFFSET) {
+				DevBridge::Log("[UnitUpgradeRules] Upgrade command vtables are not as expected: alternative upgrades are not available");
+				gAltOk = false;
+			}
+		}
+		GetUpgradeManager = (GetUpgradeManagerFn)(b + GET_UPGRADE_MANAGER_OFFSET);
+		GetUpgradeCost = (GetUpgradeCostFn)(b + GET_UPGRADE_COST_OFFSET);
+		GetUnitEfficiency = (GetUnitEfficiencyFn)(b + GET_UNIT_EFFICIENCY_OFFSET);
+		PlayerIsHuman = (PlayerBoolFn)(b + UnitCommandActions::PLAYER_IS_HUMAN_OFFSET);
 		UnitGetPlot = (UnitGetPlotFn)(b + UnitCommandActions::UNIT_GET_PLOT_OFFSET);
 		GetCity = (GetCityFn)(b + GET_CITY_OFFSET);
 		HasBuilding = (BuildingsTestFn)(b + CITY_BUILDINGS_HAS_BUILDING_OFFSET);
@@ -366,9 +596,14 @@ namespace UnitUpgradeRules {
 		Runtime::CreateHook((LPVOID)(b + GET_UPGRADE_UNIT_TYPE_OFFSET), (LPVOID)&Hook_GetUpgradeUnitType, &base_GetUpgradeUnitType);
 		Runtime::CreateHook((LPVOID)(b + GET_UPGRADE_RESOURCE_COST_OFFSET), (LPVOID)&Hook_GetUpgradeResourceCost, &base_GetUpgradeResourceCost);
 		Runtime::CreateHook((LPVOID)(b + CAN_UPGRADE_OFFSET), (LPVOID)&Hook_CanUpgrade, &base_CanUpgrade);
+		if (gAltOk) {
+			Runtime::CreateHook((LPVOID)(b + UPGRADE_COMMAND_CAN_START_OFFSET), (LPVOID)&Hook_CmdCanStart, &base_CmdCanStart);
+			Runtime::CreateHook((LPVOID)(b + UPGRADE_COMMAND_START_OFFSET), (LPVOID)&Hook_CmdStart, &base_CmdStart);
+			Runtime::CreateHook((LPVOID)(b + XP2_UPGRADE_COMMAND_START_OFFSET), (LPVOID)&Hook_CmdStartXP2, &base_CmdStartXP2);
+		}
 		gOk = true;
-		DevBridge::Log("[UnitUpgradeRules] hooks installed (no upgrading into build-disabled units; minimum levels from Lua; building prerequisite rule %s)%s",
-			gBuildingRuleOk ? "available" : "NOT available",
+		DevBridge::Log("[UnitUpgradeRules] hooks installed (no upgrading into build-disabled units; minimum levels from Lua; building prerequisite rule %s; alternative upgrades %s)%s",
+			gBuildingRuleOk ? "available" : "NOT available", gAltOk ? "available" : "NOT available",
 			gReportsOk ? "" : "; Localization exports not found: no failure reasons in the unit panel");
 	}
 }

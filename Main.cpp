@@ -106,6 +106,7 @@ void __cdecl Hook_RegisterScriptDataForUI(hks::lua_State* _, hks::lua_State* L) 
     PushSharedGlobals(L);
     CCallWithErrorHandling(L, NationalParks::RegisterUI, NULL);
     CCallWithErrorHandling(L, UnitCommandActions::RegisterUI, NULL);
+    CCallWithErrorHandling(L, UnitUpgradeRules::RegisterUI, NULL);
 
     base_RegisterScriptDataForUI(_, L);
 }
