@@ -8,6 +8,8 @@
 //   2. Per upgrade step (unit -> upgrade unit) a minimum experience level of the unit (Lua unit:GetExperience():GetLevel():
 //      1 for a new unit, +1 per promotion earned with experience; promotions given for free do not count). Set from Lua (the
 //      DevCE_UnitUpgrades mod reads its table DevCE_UnitUpgradeRequirements, unique units included).
+//   3. (switched on from Lua) An upgrade unit with Unit_BuildingPrereqs needs the unit to stand inside the borders of one of
+//      its owner's cities that has one of those buildings (built, not pillaged: the same test as training it there).
 //
 // The game picks the upgrade target in Rules::Units::GetAvailableUpgrade: the next UnitUpgrades unit (the player's unique
 // version), and further along the chain while the next one is unlocked too (Adept -> Archmage when both are). Dev CE walks
@@ -34,7 +36,20 @@ namespace UnitUpgradeRules {
 	constexpr uintptr_t UNIT_EXPERIENCE = 0x970;            // Unit::Instance: Experience (value of the FAutoVariable at +0x960)
 	constexpr uintptr_t EXPERIENCE_LEVEL = 0x10;            // Experience: int level (Reset sets 1, Promote adds 1; SetLevel writes it)
 
+	// Rule 3 (building prerequisites), same build
+	constexpr uintptr_t GET_CITY_OFFSET = 0x42e40;                // City::Instance* GetCity(const CityID*) (Lua Cities.GetPlotPurchaseCity uses it)
+	constexpr uintptr_t CITY_BUILDINGS_HAS_BUILDING_OFFSET = 0x10c450;  // City::Buildings::HasBuilding(Buildings*, BuildingTypes)
+	constexpr uintptr_t CITY_BUILDINGS_IS_PILLAGED_OFFSET = 0x10ccb0;   // City::Buildings::IsPillaged(Buildings*, BuildingTypes)
+	constexpr uintptr_t UNIT_OWNER = 0x128;                 // Unit::Instance: PlayerTypes owner
+	constexpr uintptr_t PLOT_VT_CITY_ATTRIBUTES = 0x30;     // Map::Plot vtable: const CityAttributes* (plot)
+	constexpr uintptr_t CITY_ATTR_CITY_ID = 0xc;            // CityAttributes: uint32 id of the city that owns the plot (-1: none)
+	constexpr uintptr_t CITY_ATTR_OWNER = 0x1c;             // CityAttributes: int8 owner player (-1: none)
+	constexpr uintptr_t CITY_BUILDINGS = 0xcb0;             // City::Instance: City::Buildings
+	constexpr uintptr_t UNIT_DEF_PREREQ_BUILDINGS = 0x258;  // Definition::Unit: vector<const Building*> (Unit_BuildingPrereqs), begin/end
+	constexpr uintptr_t BUILDING_DEF_INDEX = 0x14;          // Definition::Building: BuildingTypes index
+	constexpr uintptr_t BUILDING_DEF_NAME = 0x68;           // Definition::Building: Name (LOC key, char*)
+
 	void Create();
 	void ResetForNewGame();
-	int Register(hks::lua_State* L);   // gameplay state: UnitUpgradeRules.SetMinLevel / GetMinLevel / Clear
+	int Register(hks::lua_State* L);   // gameplay state: UnitUpgradeRules.SetMinLevel / GetMinLevel / Clear / SetBuildingRule / GetBuildingRule
 }

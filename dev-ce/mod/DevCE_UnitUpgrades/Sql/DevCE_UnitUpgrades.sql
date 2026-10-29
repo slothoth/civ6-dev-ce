@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS DevCE_UnitUpgradeRequirements (
 	FOREIGN KEY (UpgradeUnit) REFERENCES Units (UnitType) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- Building prerequisites: an upgrade unit with Unit_BuildingPrereqs can only be upgraded to while the unit stands inside the borders
+-- of one of its owner's cities that has one of those buildings (built, not pillaged). 1 = on (default with this mod), 0 = off:
+--   UPDATE GlobalParameters SET Value = '0' WHERE Name = 'DEVCE_UPGRADE_NEEDS_PREREQ_BUILDING';
+INSERT OR IGNORE INTO GlobalParameters (Name, Value) VALUES ('DEVCE_UPGRADE_NEEDS_PREREQ_BUILDING', '1');
+
 -- Example (not active):
 -- INSERT INTO DevCE_UnitUpgradeRequirements (Unit, UpgradeUnit, MinLevel) VALUES
 --   ('UNIT_SLTH_ADEPT', 'UNIT_SLTH_MAGE', 5),      -- 4 earned promotions

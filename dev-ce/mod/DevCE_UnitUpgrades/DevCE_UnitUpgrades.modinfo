@@ -2,8 +2,8 @@
 <Mod id="6c744c35-3117-436b-a771-324b4888eeff" version="1">
 	<Properties>
 		<Name>Dev CE Unit Upgrade Rules (experimental)</Name>
-		<Teaser>Minimum experience level per unit upgrade (needs Dev CE).</Teaser>
-		<Description>EXPERIMENTAL. Adds the table DevCE_UnitUpgradeRequirements (Unit, UpgradeUnit, MinLevel): a unit needs at least that experience level (1 + promotions earned with experience) to upgrade from Unit to UpgradeUnit. Unique units that replace either one get the same rule unless they have a row of their own. Other mods insert rows in their own SQL; list this mod as a dependency so the table exists first. Needs the Dev CE GameCore mod, which also stops units upgrading into a unit type the player cannot build (MODIFIER_PLAYER_UNIT_BUILD_DISABLED: unit limits, bans) with or without this mod. Single player only.</Description>
+		<Teaser>Minimum experience level per unit upgrade, and upgrades that need the upgraded unit's building (needs Dev CE).</Teaser>
+		<Description>EXPERIMENTAL. Adds the table DevCE_UnitUpgradeRequirements (Unit, UpgradeUnit, MinLevel): a unit needs at least that experience level (1 + promotions earned with experience) to upgrade from Unit to UpgradeUnit. Unique units that replace either one get the same rule unless they have a row of their own. Other mods insert rows in their own SQL; list this mod as a dependency so the table exists first. Also: a unit can only upgrade into a unit with Unit_BuildingPrereqs inside the borders of one of its owner's cities with one of those buildings (GlobalParameters DEVCE_UPGRADE_NEEDS_PREREQ_BUILDING, 1 by default, 0 = off). Needs the Dev CE GameCore mod, which also stops units upgrading into a unit type the player cannot build (MODIFIER_PLAYER_UNIT_BUILD_DISABLED: unit limits, bans) with or without this mod. Single player only.</Description>
 		<Authors>Dev CE</Authors>
 		<CompatibleVersions>2.0</CompatibleVersions>
 		<AffectsSavedGames>1</AffectsSavedGames>
@@ -17,6 +17,15 @@
 		</Text>
 		<Text id="LOC_DEVCE_UPGRADE_UNIT_UNAVAILABLE">
 			<en_US>The upgraded unit is not available to you right now (unit limit reached or not allowed).</en_US>
+		</Text>
+		<Text id="LOC_DEVCE_UPGRADE_NEEDS_BUILDING">
+			<en_US>Must be inside the borders of one of your cities that has {1_Building}.</en_US>
+		</Text>
+		<Text id="LOC_DEVCE_UPGRADE_NEEDS_BUILDING_2">
+			<en_US>Must be inside the borders of one of your cities that has {1_Building} or {2_Building}.</en_US>
+		</Text>
+		<Text id="LOC_DEVCE_UPGRADE_NEEDS_BUILDING_ANY">
+			<en_US>Must be inside the borders of one of your cities that has a building which can train the upgraded unit.</en_US>
 		</Text>
 	</LocalizedText>
 	<InGameActions>

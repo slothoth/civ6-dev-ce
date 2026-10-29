@@ -58,6 +58,17 @@ local function PushRules()
 		end
 	end
 	print(LOG .. #rows .. " rows, " .. nSet .. " upgrade steps with a minimum level");
+
+	-- Building prerequisites (Unit_BuildingPrereqs of the upgraded unit)
+	local param = GameInfo.GlobalParameters["DEVCE_UPGRADE_NEEDS_PREREQ_BUILDING"];
+	local on = param ~= nil and tonumber(param.Value) == 1;
+	if UnitUpgradeRules.SetBuildingRule == nil then
+		print(LOG .. "this Dev CE build has no building prerequisite rule");
+	elseif UnitUpgradeRules.SetBuildingRule(on) then
+		print(LOG .. "building prerequisite rule " .. (on and "on" or "off"));
+	else
+		print(LOG .. "building prerequisite rule NOT available (see DevBridge.log)");
+	end
 end
 
 PushRules();
