@@ -3,6 +3,7 @@
 // Licensed under the GNU Affero General Public License v3.0 (see LICENSE.txt). Not endorsed by Wild-W, Firaxis or 2K.
 #include "UnitUpgradeRules.h"
 #include "UnitCommandActions.h"
+#include "UnitPropertyRequirement.h"
 #include "Runtime.h"
 #include "DevBridge.h"
 #include <cstring>
@@ -437,6 +438,157 @@ namespace UnitUpgradeRules {
 		return r;
 	}
 
+	// ---- upgrading outside the owner's territory (EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY) --------------------------------
+	struct FactoryVector { void** begin; void** end; void** capacity; };   // std::vector<IModifierEffectFactory*>
+	typedef FactoryVector* (__fastcall* GetTypesFn)();
+	typedef void(__fastcall* VectorGrowFn)(FactoryVector* v, size_t n);
+	typedef void* (__fastcall* OperatorNewFn)(size_t size);
+	typedef uint32_t(__fastcall* MakeHashFn)(const char* s);
+	typedef void** (__fastcall* FactoryCreateFn)(void* factory, void** out, void* definition);
+	typedef int(__fastcall* TerritoryFn)(void* rules, int player, void* plot);
+	typedef const uint8_t* (__fastcall* VariantGetFn)(void* map, uint32_t key);
+
+	constexpr int FACTORY_SLOTS = 7;
+	static void* gOutsideFactoryVtable[FACTORY_SLOTS];
+	static FactoryCreateFn base_UnitPropertyCreate;
+	static TerritoryFn GetDiplomaticTerritory;
+	static uint32_t gOutsidePropertyKey = 0;
+	static bool gOutsideOk = false;
+
+		static const Check kOutsideChecks[] = {
+		{ "Registry<IModifierEffectFactory>::GetTypes", EFFECT_REGISTRY_GET_TYPES_OFFSET, { 0x48, 0x83, 0xec, 0x28, 0x65, 0x48, 0x8b, 0x04, 0x25, 0x58 }, 10 },
+		// Register<EffectFactory<AdjustUnitProperty>>: new(0x10), vtable 0xa92560, MakeHash -> +8, GetTypes, grow when full
+		{ "Register<AdjustUnitProperty>: operator new", 0x90eccf, { 0xe8, 0x2c, 0x1c, 0x08, 0x00 }, 5 },
+		{ "Register<AdjustUnitProperty>: GetTypes", 0x90ecf9, { 0xe8, 0xc2, 0xc3, 0x04, 0x00 }, 5 },
+		{ "Register<AdjustUnitProperty>: vector grow", 0x90ed13, { 0xe8, 0x38, 0xa2, 0x9f, 0xff }, 5 },
+		{ "EffectFactory<AdjustUnitProperty>::Create", UNIT_PROPERTY_FACTORY_CREATE_OFFSET, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10 }, 10 },
+		// AdjustUnitProperty::Apply reads the key at +8 and the amount at +0xc
+		{ "AdjustUnitProperty::Apply key +8", 0x8d9d19, { 0x8b, 0x57, 0x08 }, 3 },
+		{ "AdjustUnitProperty::Apply amount +0xc", 0x8d9d4e, { 0x44, 0x8b, 0x47, 0x0c }, 4 },
+		{ "Rules::Movement::GetDiplomaticTerritory", GET_DIPLOMATIC_TERRITORY_OFFSET, { 0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x49, 0x8b }, 12 },
+		// CanUpgrade: call GetDiplomaticTerritory; cmp eax, 1 (own territory)
+		{ "CanUpgrade -> GetDiplomaticTerritory", CAN_UPGRADE_TERRITORY_CALL, { 0xe8, 0x41, 0x0a, 0xfc, 0xff, 0x83, 0xf8, 0x01 }, 8 },
+	};
+
+	// EffectFactory<AdjustUnitProperty>::Create, then the fixed key and amount (Initialize found no Key/Amount arguments).
+	static void** __fastcall OutsideFactoryCreate(void* factory, void** out, void* definition) {
+		void** r = base_UnitPropertyCreate(factory, out, definition);
+		if (r != nullptr && r[0] != nullptr) {
+			char* effect = (char*)r[0];
+			*(uint32_t*)(effect + EFFECT_KEY) = gOutsidePropertyKey;
+			*(int32_t*)(effect + EFFECT_AMOUNT) = 1;
+		}
+		return r;
+	}
+
+	static bool UnitMayUpgradeOutside(void* unit) {
+		__try {
+			void* map = (char*)unit + UNIT_PROPERTIES;
+			const uint8_t* v = ((VariantGetFn)(*(void***)map)[0x60 / 8])(map, gOutsidePropertyKey);
+			if (v == nullptr) return false;
+			const uint16_t type = *(const uint16_t*)v;
+			const uint32_t flags = *(const uint32_t*)(v + 0x14);
+			const bool isNumber = ((flags >> 29) & 1) == 0 && type <= 0x15 && ((0x30002eu >> type) & 1) != 0;
+			return isNumber && *(const int*)(v + 8) > 0;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return false;
+		}
+	}
+
+	// Called instead of GetDiplomaticTerritory by CanUpgrade only (its call instruction is rewritten). tUnit = the unit being
+	// checked (set by our CanUpgrade hook).
+	static int __fastcall TerritoryForUpgrade(void* rules, int player, void* plot) {
+		void* unit = tUnit;
+		if (unit != nullptr && UnitMayUpgradeOutside(unit)) return 1;
+		return GetDiplomaticTerritory(rules, player, plot);
+	}
+
+	// Executable memory within +-2 GB of the call site, for the jump to TerritoryForUpgrade (as LuaHooks' AllocNear).
+	static void* AllocNear(uintptr_t target, size_t size) {
+		SYSTEM_INFO si; GetSystemInfo(&si);
+		const uintptr_t gran = si.dwAllocationGranularity;
+		for (uintptr_t off = gran; off < 0x70000000; off += gran) {
+			for (int dir = 0; dir < 2; dir++) {
+				const uintptr_t cand = dir == 0 ? (target & ~(gran - 1)) - off : (target & ~(gran - 1)) + off;
+				if (dir == 0 && cand > target) continue;
+				if (cand < 0x10000) continue;
+				void* p = VirtualAlloc((void*)cand, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+				if (p == nullptr) continue;
+				const intptr_t dist = (intptr_t)(uintptr_t)p - (intptr_t)target;
+				if (dist > 0x7FF00000 || dist < -0x7FF00000) { VirtualFree(p, 0, MEM_RELEASE); continue; }
+				return p;
+			}
+		}
+		return nullptr;
+	}
+
+	// CanUpgrade's `call GetDiplomaticTerritory` (e8 rel32) -> `call stub`, stub = `mov rax, TerritoryForUpgrade; jmp rax`.
+	static bool PatchTerritoryCall(uintptr_t b) {
+		uint8_t* site = (uint8_t*)(b + CAN_UPGRADE_TERRITORY_CALL);
+		uint8_t* stub = (uint8_t*)AllocNear((uintptr_t)site, 0x1000);
+		if (stub == nullptr) return false;
+		const uint64_t target = (uint64_t)&TerritoryForUpgrade;
+		stub[0] = 0x48; stub[1] = 0xb8; memcpy(stub + 2, &target, 8);   // mov rax, imm64
+		stub[10] = 0xff; stub[11] = 0xe0;                                // jmp rax
+		FlushInstructionCache(GetCurrentProcess(), stub, 12);
+		const int64_t rel = (int64_t)(uintptr_t)stub - (int64_t)((uintptr_t)site + 5);
+		if (rel > INT32_MAX || rel < INT32_MIN) return false;
+		const int32_t rel32 = (int32_t)rel;
+		DWORD old = 0;
+		if (!VirtualProtect(site, 5, PAGE_EXECUTE_READWRITE, &old)) return false;
+		memcpy(site + 1, &rel32, 4);   // keep the e8 opcode, new target
+		VirtualProtect(site, 5, old, &old);
+		FlushInstructionCache(GetCurrentProcess(), site, 5);
+		return true;
+	}
+
+	static bool AlreadyRegistered(FactoryVector* v) {
+		for (void** it = v->begin; it != v->end; ++it) if (*it != nullptr && *(void**)*it == (void*)gOutsideFactoryVtable) return true;
+		return false;
+	}
+
+	// Registers the effect as Registry<IModifierEffectFactory>::Register<T> does, and redirects CanUpgrade's territory check.
+	static void CreateOutsideTerritory(uintptr_t b) {
+		for (const Check& c : kOutsideChecks) {
+			if (memcmp((void*)(b + c.rva), c.bytes, c.n) != 0) {
+				DevBridge::Log("[UnitUpgradeRules] %s has unexpected bytes at 0x%llx: %s is not available", c.name, (unsigned long long)c.rva, OUTSIDE_TERRITORY_EFFECT);
+				return;
+			}
+		}
+		const uintptr_t* vt = (const uintptr_t*)(b + UNIT_PROPERTY_FACTORY_VTABLE);
+		if (vt[5] != b + UNIT_PROPERTY_FACTORY_CREATE_OFFSET) {
+			DevBridge::Log("[UnitUpgradeRules] EffectFactory<AdjustUnitProperty> vtable is not as expected: %s is not available", OUTSIDE_TERRITORY_EFFECT);
+			return;
+		}
+		MakeHashFn makeHash = (MakeHashFn)(b + UnitPropertyRequirement::MAKE_HASH_OFFSET);
+		OperatorNewFn operatorNew = (OperatorNewFn)(b + UnitPropertyRequirement::OPERATOR_NEW_OFFSET);
+		VectorGrowFn grow = (VectorGrowFn)(b + UnitPropertyRequirement::FACTORY_VECTOR_GROW_OFFSET);
+		GetTypesFn getTypes = (GetTypesFn)(b + EFFECT_REGISTRY_GET_TYPES_OFFSET);
+		base_UnitPropertyCreate = (FactoryCreateFn)(b + UNIT_PROPERTY_FACTORY_CREATE_OFFSET);
+		GetDiplomaticTerritory = (TerritoryFn)(b + GET_DIPLOMATIC_TERRITORY_OFFSET);
+		gOutsidePropertyKey = makeHash(OUTSIDE_TERRITORY_PROPERTY);
+
+		memcpy(gOutsideFactoryVtable, (void*)vt, sizeof(gOutsideFactoryVtable));
+		gOutsideFactoryVtable[5] = (void*)&OutsideFactoryCreate;
+
+		FactoryVector* types = getTypes();
+		if (types == nullptr) return;
+		if (!AlreadyRegistered(types)) {
+			void** factory = (void**)operatorNew(0x10);
+			if (factory == nullptr) return;
+			factory[0] = gOutsideFactoryVtable;
+			*(uint32_t*)(factory + 1) = makeHash(OUTSIDE_TERRITORY_EFFECT);
+			if (types->end == types->capacity) grow(types, 1);
+			*types->end = factory;
+			types->end++;
+		}
+		if (!PatchTerritoryCall(b)) {
+			DevBridge::Log("[UnitUpgradeRules] could not redirect CanUpgrade's territory check: %s has no effect", OUTSIDE_TERRITORY_EFFECT);
+			return;
+		}
+		gOutsideOk = true;
+	}
+
 	// ---- Lua (gameplay state) ---------------------------------------------------------------------------------------------
 	// UnitUpgradeRules.SetMinLevel(fromUnitIndex, toUnitIndex, level): level <= 1 removes the rule
 	static int lSetMinLevel(hks::lua_State* L) {
@@ -602,8 +754,9 @@ namespace UnitUpgradeRules {
 			Runtime::CreateHook((LPVOID)(b + XP2_UPGRADE_COMMAND_START_OFFSET), (LPVOID)&Hook_CmdStartXP2, &base_CmdStartXP2);
 		}
 		gOk = true;
-		DevBridge::Log("[UnitUpgradeRules] hooks installed (no upgrading into build-disabled units; minimum levels from Lua; building prerequisite rule %s; alternative upgrades %s)%s",
-			gBuildingRuleOk ? "available" : "NOT available", gAltOk ? "available" : "NOT available",
+		CreateOutsideTerritory(b);   // after the CanUpgrade hook: it sets the unit the redirected check reads
+		DevBridge::Log("[UnitUpgradeRules] hooks installed (no upgrading into build-disabled units; minimum levels from Lua; building prerequisite rule %s; alternative upgrades %s; EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY %s)%s",
+			gBuildingRuleOk ? "available" : "NOT available", gAltOk ? "available" : "NOT available", gOutsideOk ? "available" : "NOT available",
 			gReportsOk ? "" : "; Localization exports not found: no failure reasons in the unit panel");
 	}
 }

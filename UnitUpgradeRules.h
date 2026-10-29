@@ -71,6 +71,24 @@ namespace UnitUpgradeRules {
 	constexpr uint32_t RESULT_UPGRADE_COST = 0x44435543;           // gold cost of this upgrade
 	constexpr uint32_t RESULT_UPGRADE_RESOURCE_COST = 0x44435552;  // strategic resource cost of this upgrade
 
+	// Upgrading outside the owner's territory: effect EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY (unit subject, no arguments).
+	// It is the game's EFFECT_ADJUST_UNIT_PROPERTY with a fixed key and amount: Apply adds 1 to the unit property
+	// DEVCE_UPGRADE_OUTSIDE_TERRITORY, Remove takes it away (a count, so two sources and one removed still leave it on). Unit
+	// properties are in the save, so it survives save and load like the game's own effects. CanUpgrade's territory check
+	// (its one call of Rules::Movement::GetDiplomaticTerritory) is redirected at that call site only: a unit with the property > 0
+	// counts as in its own territory.
+	constexpr uintptr_t EFFECT_REGISTRY_GET_TYPES_OFFSET = 0x95b0c0;  // Registry<IModifierEffectFactory>::GetTypes() -> std::vector<IModifierEffectFactory*>&
+	constexpr uintptr_t UNIT_PROPERTY_FACTORY_VTABLE = 0xa92560;      // EffectFactory<AdjustUnitProperty> vtable (7 slots; 5 = Create)
+	constexpr uintptr_t UNIT_PROPERTY_FACTORY_CREATE_OFFSET = 0x8a3850;  // its Create(factory, shared_ptr<IEffect>* out, definition) -> out
+	constexpr uintptr_t UNIT_PROPERTY_EFFECT_VTABLE = 0xa9e440;       // AdjustUnitProperty vtable (0 = Initialize, 12 = Apply(unit), 13 = Remove(unit))
+	constexpr uintptr_t EFFECT_KEY = 0x8;                   // AdjustUnitProperty: MakeHash(Key argument)
+	constexpr uintptr_t EFFECT_AMOUNT = 0xc;                // AdjustUnitProperty: Amount argument
+	constexpr uintptr_t GET_DIPLOMATIC_TERRITORY_OFFSET = 0x378410;   // Rules::Movement::Instance::GetDiplomaticTerritory(rules, player, plot) -> TerritoryTypes (1 = own)
+	constexpr uintptr_t CAN_UPGRADE_TERRITORY_CALL = 0x3b79ca;        // CanUpgrade: call GetDiplomaticTerritory (rewritten to call Dev CE)
+	constexpr uintptr_t UNIT_PROPERTIES = 0x1f0;            // Unit::Instance: Data::VariantMap (vtable +0x60 = get(key) -> Variant*)
+	constexpr const char* OUTSIDE_TERRITORY_EFFECT = "EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY";
+	constexpr const char* OUTSIDE_TERRITORY_PROPERTY = "DEVCE_UPGRADE_OUTSIDE_TERRITORY";
+
 	void Create();
 	void ResetForNewGame();
 	int Register(hks::lua_State* L);     // gameplay state: UnitUpgradeRules.SetMinLevel / GetMinLevel / Clear / SetBuildingRule / GetBuildingRule / AddAltUpgrade / ClearAltUpgrades / GetAltUpgrades

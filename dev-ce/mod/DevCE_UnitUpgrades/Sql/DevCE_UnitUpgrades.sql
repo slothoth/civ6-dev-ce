@@ -34,6 +34,19 @@ CREATE TABLE IF NOT EXISTS DevCE_UnitAltUpgrades (
 	FOREIGN KEY (UpgradeUnit) REFERENCES Units (UnitType) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- Upgrading outside your own territory: effect EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY (Dev CE, no arguments). A unit with it
+-- can upgrade anywhere (all other upgrade rules still apply). It is kept in the unit property DEVCE_UPGRADE_OUTSIDE_TERRITORY
+-- (a count of the modifiers giving it), so it stays after save and load. Two modifier types:
+--   MODIFIER_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY          the unit itself: unit abilities, promotions
+--   MODIFIER_DEVCE_PLAYER_UNITS_UPGRADE_OUTSIDE_TERRITORY  all units of a player (traits, policies, ...), also units made later;
+--                                                          a SubjectRequirementSetId picks some of them
+INSERT OR IGNORE INTO Types (Type, Kind) VALUES
+	('MODIFIER_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY', 'KIND_MODIFIER'),
+	('MODIFIER_DEVCE_PLAYER_UNITS_UPGRADE_OUTSIDE_TERRITORY', 'KIND_MODIFIER');
+INSERT OR IGNORE INTO DynamicModifiers (ModifierType, CollectionType, EffectType) VALUES
+	('MODIFIER_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY', 'COLLECTION_OWNER', 'EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY'),
+	('MODIFIER_DEVCE_PLAYER_UNITS_UPGRADE_OUTSIDE_TERRITORY', 'COLLECTION_PLAYER_UNITS', 'EFFECT_DEVCE_UNIT_UPGRADE_OUTSIDE_TERRITORY');
+
 -- Example (not active):
 -- INSERT INTO DevCE_UnitUpgradeRequirements (Unit, UpgradeUnit, MinLevel) VALUES
 --   ('UNIT_SLTH_ADEPT', 'UNIT_SLTH_MAGE', 5),      -- 4 earned promotions
