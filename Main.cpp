@@ -31,6 +31,7 @@
 #include "UnitCommandActions.h"
 #include "UnitPropertyRequirement.h"
 #include "UnitUpgradeFallback.h"
+#include "UnitUpgradeRules.h"
 #include "DevBridge.h"
 #include "LuaHooks.h"
 #include "LuaDebugger.h"
@@ -91,6 +92,8 @@ void __cdecl Hook_RegisterScriptData(hks::lua_State* L) {
     CCallWithErrorHandling(L, NationalParks::Register, NULL);
     UnitCommandActions::ResetForNewGame();    // a new game context: the command definitions are pushed again by the gameplay script
     CCallWithErrorHandling(L, UnitCommandActions::Register, NULL);
+    UnitUpgradeRules::ResetForNewGame();    // a new game context: the upgrade rules are pushed again by the gameplay script
+    CCallWithErrorHandling(L, UnitUpgradeRules::Register, NULL);
 
     base_RegisterScriptData(L);
 }
@@ -161,6 +164,7 @@ static void InitHooks() {
     UnitCommandActions::Create();
     UnitPropertyRequirement::Create();
     UnitUpgradeFallback::Create();
+    UnitUpgradeRules::Create();
     TerrainView::Create();
 
     std::cout << "Hooks initialized!\n";

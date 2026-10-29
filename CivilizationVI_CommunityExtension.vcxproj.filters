@@ -560,6 +560,9 @@
     <ClInclude Include="UnitUpgradeFallback.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="UnitUpgradeRules.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="EAVector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
