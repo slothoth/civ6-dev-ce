@@ -27,6 +27,8 @@
 #include "GameProcessor.h"
 #include "VetoEvents.h"
 #include "NationalParks.h"
+#include "GreatPersonAssign.h"
+#include "UnitCommandActions.h"
 #include "DevBridge.h"
 #include "LuaHooks.h"
 #include "LuaDebugger.h"
@@ -85,6 +87,8 @@ void __cdecl Hook_RegisterScriptData(hks::lua_State* L) {
     CCallWithErrorHandling(L, AI::CongressSupport::RegisterOutcomeTypes, NULL);
     CCallWithErrorHandling(L, AI::Espionage::RegisterAIEspionageManager, NULL);
     CCallWithErrorHandling(L, NationalParks::Register, NULL);
+    UnitCommandActions::ResetForNewGame();    // a new game context: the command definitions are pushed again by the gameplay script
+    CCallWithErrorHandling(L, UnitCommandActions::Register, NULL);
 
     base_RegisterScriptData(L);
 }
@@ -96,6 +100,7 @@ void __cdecl Hook_RegisterScriptDataForUI(hks::lua_State* _, hks::lua_State* L) 
 
     PushSharedGlobals(L);
     CCallWithErrorHandling(L, NationalParks::RegisterUI, NULL);
+    CCallWithErrorHandling(L, UnitCommandActions::RegisterUI, NULL);
 
     base_RegisterScriptDataForUI(_, L);
 }
@@ -150,6 +155,8 @@ static void InitHooks() {
     GameProcessor::Create();
     VetoEvents::Create();
     DevBridge::Create();
+    GreatPersonAssign::Create();
+    UnitCommandActions::Create();
     TerrainView::Create();
 
     std::cout << "Hooks initialized!\n";

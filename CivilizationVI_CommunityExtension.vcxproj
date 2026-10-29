@@ -282,6 +282,8 @@
     <ClCompile Include="MemoryManipulation.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="NationalParks.cpp" />
+    <ClCompile Include="GreatPersonAssign.cpp" />
+    <ClCompile Include="UnitCommandActions.cpp" />
     <ClCompile Include="Player.cpp" />
     <ClCompile Include="PlayerCities.cpp" />
     <ClCompile Include="PlayerGovernors.cpp" />
@@ -394,6 +396,8 @@
     <ClInclude Include="HavokScript.h" />
     <ClInclude Include="MemoryManipulation.h" />
     <ClInclude Include="NationalParks.h" />
+    <ClInclude Include="GreatPersonAssign.h" />
+    <ClInclude Include="UnitCommandActions.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="PlayerCities.h" />
     <ClInclude Include="PlayerGovernors.h" />
