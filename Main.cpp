@@ -30,6 +30,7 @@
 #include "GreatPersonAssign.h"
 #include "UnitCommandActions.h"
 #include "UnitPropertyRequirement.h"
+#include "UnitUpgradeFallback.h"
 #include "DevBridge.h"
 #include "LuaHooks.h"
 #include "LuaDebugger.h"
@@ -159,6 +160,7 @@ static void InitHooks() {
     GreatPersonAssign::Create();
     UnitCommandActions::Create();
     UnitPropertyRequirement::Create();
+    UnitUpgradeFallback::Create();
     TerrainView::Create();
 
     std::cout << "Hooks initialized!\n";

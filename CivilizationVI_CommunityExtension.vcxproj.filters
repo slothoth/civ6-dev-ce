@@ -557,6 +557,9 @@
     <ClInclude Include="UnitPropertyRequirement.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="UnitUpgradeFallback.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="EAVector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
