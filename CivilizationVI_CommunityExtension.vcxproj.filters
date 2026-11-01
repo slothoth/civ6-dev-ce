@@ -240,6 +240,9 @@
     <ClCompile Include="DistrictCitizens.cpp">
       <Filter>Source Files\GameCore</Filter>
     </ClCompile>
+    <ClCompile Include="CitySpecialists.cpp">
+      <Filter>Source Files\GameCore</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="HavokScript.h">
@@ -537,6 +540,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DistrictCitizens.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CitySpecialists.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EAVector.h">
