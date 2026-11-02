@@ -33,6 +33,7 @@
 #include "TerrainView.h"
 #include "AudioPlayer.h"
 #include "BankTrace.h"
+#include "FounderUniques.h"
 
 HANDLE mainThread;
 
@@ -151,6 +152,7 @@ static void InitHooks() {
     VetoEvents::Create();
     DevBridge::Create();
     TerrainView::Create();
+    FounderUniques::Create();
 
     std::cout << "Hooks initialized!\n";
 }
