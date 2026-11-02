@@ -33,6 +33,8 @@
 #include "TerrainView.h"
 #include "AudioPlayer.h"
 #include "BankTrace.h"
+#include "GoldPurchase.h"
+#include "FoodProduction.h"
 
 HANDLE mainThread;
 
@@ -151,6 +153,8 @@ static void InitHooks() {
     VetoEvents::Create();
     DevBridge::Create();
     TerrainView::Create();
+    GoldPurchase::Create();
+    FoodProduction::Create();
 
     std::cout << "Hooks initialized!\n";
 }
